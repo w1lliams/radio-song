@@ -30,15 +30,23 @@ var Shoutcast = function(url) {
 	  port: this.url.port,
 	  host: this.url.hostname
 	}, this.onConnect.bind(this));
+	this.client.setTimeout(3000, this.onTimeout.bind(this));
 
 
 	this.client
 		.on('data', this.onData.bind(this))
-	  	.on('end', this.onEnd.bind(this))
-		.on('error', this.onEnd.bind(this))
-		.on('close', this.onEnd.bind(this))
+	  	.on('end', this.onError.bind(this))
+		.on('error', this.onError.bind(this))
+		.on('close', this.onError.bind(this))
 };
 util.inherits(Shoutcast, EventEmitter);
+
+/**
+ *
+ */
+Shoutcast.prototype.onTimeout = function() {
+	this.client.destroy();
+};
 
 /**
  * 
@@ -95,7 +103,8 @@ Shoutcast.prototype.onConnect = function() {
   console.log('client connected');
   this.client.write(
 	'GET '+ this.url.path +' HTTP/1.0\r\n' + 
-	'Icy-MetaData:1\r\n' +
+	'Icy-MetaData: 1\r\n' +
+	'User-Agent: VLC/2.0.5 LibVLC/2.0.5\r\n' +
 	'\r\n'
   );
 };
@@ -112,6 +121,7 @@ Shoutcast.prototype.onError = function () {
  * вытаскиваем из заголовков "metaint"
  */
 Shoutcast.prototype.processHeaders = function() {
+	console.log(this.headers.src);
 	var data = this.headers.src.split('\r\n');
 	for(var i = 0; i < data.length; i++) {
 		var header = data[i].split(':');
@@ -142,8 +152,11 @@ Shoutcast.prototype.processMetadata = function(buffer, start) {
 
 
 var streamUrl = 'http://chicago.discovertrance.com:9214/;';
-//var streamUrl = 'http://173.244.215.162:8050/;';
+streamUrl = 'http://ice.rosebud-media.de:8000/88vier-ogg1.ogg';
 var parser = new Shoutcast(streamUrl);
 parser.on('metadata', function(metadata) {
 	console.log(metadata);
+});
+parser.on('error', function(){
+	console.log('error shoutcast');
 });
