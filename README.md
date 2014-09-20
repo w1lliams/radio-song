@@ -15,7 +15,8 @@ var reader = new Reader('<stream-url>')
 reader.on('metadata', function(songName) {
   ...
 });
-parreaderser.on('error', function(e){
+reader.on('error', function(e){
   ...
 });
 ```
+

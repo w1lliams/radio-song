@@ -1,0 +1,230 @@
+'use strict';
+
+var urlLib = require('url'),
+    net = require('net'),
+    http = require('http'),
+    util = require('util'),
+    EventEmitter = require('events').EventEmitter;
+
+
+var Shoutcast = function(url) {
+  this.url = urlLib.parse(url);
+  // описание ошибки (если таковая была) @see closeClient
+  this.error = '';
+  // флаг указывает что нужно при закрытии сокета генерировать события и т.п. @see onError
+  this.triggerError = true;
+  // счетчик, сколо прочитано байт до метаданных
+  this.readBytes = 0;
+  // все что связанно с заголовками
+  this.headers = {
+    src: '',       // заголовки всыром виде
+    isRead: true,  // флаг указывающий что сейчас еще из сокета еще считываются заголовки
+    newLineCount: 0,
+    type: ''       // тип станции (shoutcast, icecast)
+  };
+
+  this.metadata = {
+    src: '',
+    isRead: false,
+    metaint: 0,
+    bytesDone: 0,
+    length: 0,
+    done: false,
+    attempts: 0
+  };
+
+  this.client = net.connect({
+    port: this.url.port,
+    host: this.url.hostname
+  }, this.onConnect.bind(this));
+  this.client.setTimeout(3000, this.onTimeout.bind(this));
+
+
+  this.client
+    .on('data', this.onData.bind(this))
+    .on('end', this.onError.bind(this))
+    .on('error', this.onError.bind(this))
+    .on('close', this.onError.bind(this))
+};
+util.inherits(Shoutcast, EventEmitter);
+
+/**
+ *
+ */
+Shoutcast.prototype.onTimeout = function() {
+  this.closeClient();
+};
+
+/**
+ * Получеем байты из сокета чтения потока станции
+ */
+Shoutcast.prototype.onData = function(data){
+  var skip = 0; // сколько занимают байт заголовки в этом блоке
+  if(this.headers.isRead)
+    for(var i = 0; i < data.length; i++) {
+      // если еще не встретили два перехода строки подряд, значит читаем заголовки
+      if(this.headers.newLineCount < 2) {
+        this.headers.src += String.fromCharCode(data[i]);
+        skip++;
+        // считаем переходы строк (игнорируя \n)
+        if(data[i] == 10)
+          this.headers.newLineCount++;
+        else if(data[i] != 13)
+          this.headers.newLineCount = 0;
+      } else {
+        this.headers.isRead = false;
+        this.processHeaders();
+        break;
+      }
+    }
+
+  // если прочли заголовки
+  if(!this.headers.isRead) {
+    if(this.metadata.isRead) { // если уже получаем метаданные...
+      this.processMetadata(data, 0);
+    } else {  // все еще ищем метаданные
+      // если в текущем блоке данных уже есть метаданные
+      if((data.length + this.readBytes - skip) > this.headers.metaint) {
+        this.metadata.isRead = true;
+        // номер байта с которого начинаются метаданные
+        var startByte = this.headers.metaint - this.readBytes;
+        // первый байт метаданных это их размер, если натыкаемся 3 раза подряд на 0 размер, выходим
+        if(data[startByte] == 0) {
+          if(this.metadata.attempts > 3) {
+            this.closeClient('shoutcast: can`t find metadata');
+            return;
+          }
+          this.metadata.attempts++;
+          this.readBytes = data.length - startByte - 1;
+        } else {
+          this.metadata.isRead = true;
+          this.metadata.length = data[startByte] * 16;
+          this.processMetadata(data, startByte + 1);
+        }
+      } else
+        this.readBytes += data.length - skip;
+    }
+  }
+};
+
+/**
+ * 
+ */
+Shoutcast.prototype.onConnect = function() {
+  this.client.write(
+  'GET '+ this.url.path +' HTTP/1.0\r\n' + 
+  'Icy-MetaData: 1\r\n' +
+  'User-Agent: VLC/2.0.5 LibVLC/2.0.5\r\n' +
+  '\r\n'
+  );
+};
+
+/**
+ * 
+ */
+Shoutcast.prototype.onError = function () {
+  if(!this.metadata.done && this.triggerError)
+    this.emit('error', this.error);
+};
+
+/**
+ * Закрываем сокет
+ * @param {string=} error
+ * @param {bool=} silent не генерировать события и т.п.
+ */
+Shoutcast.prototype.closeClient = function (error, silent) {
+  this.triggerError = !silent;
+  this.error = error;
+  this.client.destroy();
+};
+
+/**
+ * вытаскиваем из заголовков "metaint"
+ */
+Shoutcast.prototype.processHeaders = function() {
+  var data = this.headers.src.split('\r\n');
+  // определяем тип сервера (icecast/shoutcast)
+  // если shoutcast продолжаем работать дальше с сокетом и читаем пока не встретим метаданные
+  if(/^icy/i.test(data[0])) {
+    this.headers.type = 'shoutcast';
+    for(var i = 0; i < data.length; i++) {
+      var header = data[i].split(':');
+      if(header[0] == 'icy-metaint') {
+        this.headers.metaint = parseInt(header[1]);
+        break;
+      }
+    }
+    // если metaint == 0, значит метаданных в потоке нет
+    if(this.headers.metaint == 0 || isNaN(this.headers.metaint))
+      this.closeClient('shoutcast: station don`t support metadata')
+  }
+  // для icecast нужно парсить html страницу (закрываем сокет)
+  else if(/^http/i.test(data[0])) {
+    this.headers.type = 'icecast';
+    this.closeClient('icecast server type', true);
+    this.parseIcecastMetadata();
+  }
+  else this.closeClient('unknown server type');
+};
+
+/**
+ * Метаданные успешно получены
+ */
+Shoutcast.prototype.metadataDone = function () {
+  this.metadata.done = true;
+  this.emit('metadata', this.metadata.src);
+};
+
+/**
+ * получаем из сокета метаданные для Shoutcast
+ */
+Shoutcast.prototype.processMetadata = function(buffer, start) {
+  var need = this.metadata.length - this.metadata.bytesDone;
+  if((buffer.length - start) >= need) {
+    this.metadata.src += buffer.slice(start, start + need).toString();
+    // вырезаем название песни
+    var match = /StreamTitle='(.*)';StreamUrl/im.exec(this.metadata.src);
+    if(match) this.metadata.src = match[1];
+    this.metadataDone();
+    this.closeClient('finish');
+  } else {
+    this.metadata.src += buffer.slice(start).toString();
+    this.metadata.bytesDone += buffer.length - start;
+  }
+};
+
+/**
+ * Получаем название песни для icecast (парсим страницу /status.xsl)
+ */
+Shoutcast.prototype.parseIcecastMetadata = function () {
+  var self = this;
+  http.get('http://' + this.url.hostname + ':' + this.url.port + '/status.xsl?mount=' + this.url.pathname,
+    function (res) {
+      if(200 != res.statusCode) {
+        self.closeClient('icecast: unavailable status page');
+        return false;
+      }
+      var body = '';
+      res
+        .on('data', function (chunk) {
+          body += chunk.toString();
+        })
+        .on('end', function () {
+          var rows = body.match(/<td[^>]*>[^<]+:<\/td>[^<]*<td[^>]+class="streamdata"[^>]*>.*?<\/td>/img),
+              matches = {};
+          if(rows)
+            for(var i = 0 ; i < rows.length; i++) {
+              var match = /<td[^>]*>([^<]+):<\/td>[^<]*<td[^>]+class="streamdata"[^>]*>(.*?)<\/td>/im.exec(rows[i]);
+              if(match)
+                matches[match[1]] = match[2];
+            }
+          self.metadata.src = matches['Current Song'] || '';
+          self.metadataDone();
+        });
+    })
+    .on('error', function () {
+      self.closeClient('icecast: unavailable status page');
+    });
+};
+
+module.exports = Shoutcast;

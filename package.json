@@ -1,0 +1,29 @@
+{
+  "name": "radio-song",
+  "version": "0.1.1",
+  "description": "This lib allows to grab/parse song titles from the radio (shoutcast/icecast) stream.",
+  "author": {
+    "name": "w1lliams",
+    "email": "melnichuk.lm@gmail.com"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/w1lliams/radio-metadata"
+  },
+  "keywords": [
+    "shoutcast",
+    "icecast",
+    "radio",
+    "song"
+  ],
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/w1lliams/radio-metadata/issues"
+  },
+  "homepage": "https://github.com/w1lliams/radio-metadata",
+  "readmeFilename": "README.md",
+  "main": "./index.js"
+}
