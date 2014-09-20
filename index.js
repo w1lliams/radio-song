@@ -1,10 +1,10 @@
 'use strict';
 
 var urlLib = require('url'),
-    net = require('net'),
-    http = require('http'),
-    util = require('util'),
-    EventEmitter = require('events').EventEmitter;
+  net = require('net'),
+  http = require('http'),
+  util = require('util'),
+  EventEmitter = require('events').EventEmitter;
 
 
 var Shoutcast = function(url) {
@@ -33,6 +33,40 @@ var Shoutcast = function(url) {
     attempts: 0
   };
 
+  this.start();
+};
+util.inherits(Shoutcast, EventEmitter);
+
+/**
+ *
+ */
+Shoutcast.prototype.start = function () {
+  var self = this;
+  // пробуем достать название песни из "7.html", если не получается парсим поток
+  getHtmlPage(
+    {
+      hostname: this.url.hostname,
+      port: this.url.port,
+      path: '/7.html'
+    },
+    function (body) {
+      var match = /<body>\d*,\d*,\d*,\d*,\d*,\d*,(.*)<\/body>/mi.exec(body);
+      if(match && match[1].length > 0) {
+        self.metadata.src = match[1].trim();
+        self.metadataDone();
+      }
+      else self.readStream();
+    },
+    function () {
+      self.readStream();
+    }
+  );
+};
+
+/**
+ * Запуск чтения потока
+ */
+Shoutcast.prototype.readStream = function () {
   this.client = net.connect({
     port: this.url.port,
     host: this.url.hostname
@@ -46,7 +80,6 @@ var Shoutcast = function(url) {
     .on('error', this.onError.bind(this))
     .on('close', this.onError.bind(this))
 };
-util.inherits(Shoutcast, EventEmitter);
 
 /**
  *
@@ -108,19 +141,19 @@ Shoutcast.prototype.onData = function(data){
 };
 
 /**
- * 
+ *
  */
 Shoutcast.prototype.onConnect = function() {
   this.client.write(
-  'GET '+ this.url.path +' HTTP/1.0\r\n' + 
-  'Icy-MetaData: 1\r\n' +
-  'User-Agent: VLC/2.0.5 LibVLC/2.0.5\r\n' +
-  '\r\n'
+      'GET '+ this.url.path +' HTTP/1.0\r\n' +
+      'Icy-MetaData: 1\r\n' +
+      'User-Agent: VLC/2.0.5 LibVLC/2.0.5\r\n' +
+      '\r\n'
   );
 };
 
 /**
- * 
+ *
  */
 Shoutcast.prototype.onError = function () {
   if(!this.metadata.done && this.triggerError)
@@ -194,14 +227,66 @@ Shoutcast.prototype.processMetadata = function(buffer, start) {
 };
 
 /**
+ * @returns {boolean}
+ */
+Shoutcast.prototype.isEmptyMountPoint = function () {
+  return this.url.pathname == '/;' || this.url.pathname == '/' || this.url.pathname == ';' || this.url.pathname == '';
+};
+
+/**
  * Получаем название песни для icecast (парсим страницу /status.xsl)
  */
 Shoutcast.prototype.parseIcecastMetadata = function () {
+  if(this.isEmptyMountPoint()) {
+    this.closeClient('icecast: empty mount point');
+    return false;
+  }
+
   var self = this;
-  http.get('http://' + this.url.hostname + ':' + this.url.port + '/status.xsl?mount=' + this.url.pathname,
+  getHtmlPage(
+    {
+      hostname: this.url.hostname,
+      port: this.url.port,
+      path: '/status.xsl?mount=' + this.url.pathname
+    },
+    function (body) {
+      var rows = body.match(/<td[^>]*>[^<]+:<\/td>[^<]*<td[^>]+class="streamdata"[^>]*>.*?<\/td>/img),
+        matches = {};
+      if(rows)
+        for(var i = 0 ; i < rows.length; i++) {
+          var match = /<td[^>]*>([^<]+):<\/td>[^<]*<td[^>]+class="streamdata"[^>]*>(.*?)<\/td>/im.exec(rows[i]);
+          if(match)
+            matches[match[1]] = match[2];
+        }
+      self.metadata.src = matches['Current Song'] || '';
+      self.metadataDone();
+    },
+    function (e) {
+      self.closeClient(e);
+    }
+  );
+};
+
+/**
+ * @param {object} options
+ * @param {function} success
+ * @param {function} error
+ */
+function getHtmlPage (options, success, error) {
+  var timeout, req;
+  options.headers = options.headers || {};
+  options.headers['User-Agent'] = 'Mozilla/5.0 (Windows; U; Windows NT 5.1; en-US; rv:1.8.1.13) Gecko/20080311 Firefox/2.0.0.13';
+
+  // ставим таймаут, если вдруг начнем читать какой-то непрерывный поток
+  timeout = setTimeout(function () {
+    req.destroy();
+  }, 3000);
+
+  req = http.get(options,
     function (res) {
       if(200 != res.statusCode) {
-        self.closeClient('icecast: unavailable status page');
+        clearTimeout(timeout);
+        error('response status != 200');
         return false;
       }
       var body = '';
@@ -210,21 +295,14 @@ Shoutcast.prototype.parseIcecastMetadata = function () {
           body += chunk.toString();
         })
         .on('end', function () {
-          var rows = body.match(/<td[^>]*>[^<]+:<\/td>[^<]*<td[^>]+class="streamdata"[^>]*>.*?<\/td>/img),
-              matches = {};
-          if(rows)
-            for(var i = 0 ; i < rows.length; i++) {
-              var match = /<td[^>]*>([^<]+):<\/td>[^<]*<td[^>]+class="streamdata"[^>]*>(.*?)<\/td>/im.exec(rows[i]);
-              if(match)
-                matches[match[1]] = match[2];
-            }
-          self.metadata.src = matches['Current Song'] || '';
-          self.metadataDone();
+          clearTimeout(timeout);
+          success(body);
         });
     })
     .on('error', function () {
-      self.closeClient('icecast: unavailable status page');
+      clearTimeout(timeout);
+      error('unavailable');
     });
-};
+}
 
 module.exports = Shoutcast;
