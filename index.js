@@ -6,6 +6,15 @@ var urlLib = require('url'),
 
 
 var Shoutcast = function(url) {
+  this.init(url);
+  this.start();
+};
+util.inherits(Shoutcast, EventEmitter);
+
+/**
+ *
+ */
+Shoutcast.prototype.init = function (url) {
   this.url = urlLib.parse(url);
   // описание ошибки (если таковая была) @see closeClient
   this.error = '';
@@ -30,10 +39,7 @@ var Shoutcast = function(url) {
     done: false,
     attempts: 0
   };
-
-  this.start();
 };
-util.inherits(Shoutcast, EventEmitter);
 
 /**
  *
@@ -142,9 +148,10 @@ Shoutcast.prototype.onData = function(data){
  */
 Shoutcast.prototype.onConnect = function() {
   this.client.write(
-    'GET '+ this.url.path +' HTTP/1.0\r\n' +
-    'Icy-MetaData: 1\r\n' +
+    'GET '+ this.url.path +' HTTP/1.1\r\n' +
+    'Host: ' + this.url.hostname + '\r\n' +
     'User-Agent: VLC/2.0.5 LibVLC/2.0.5\r\n' +
+    'Icy-MetaData: 1\r\n' +
     '\r\n'
   );
 };
@@ -173,15 +180,29 @@ Shoutcast.prototype.closeClient = function (error, silent) {
  */
 Shoutcast.prototype.processHeaders = function() {
   var data = this.headers.src.split('\r\n');
+  // проверяем на редирект
+  if(/HTTP\/1\.[10] 30[12] /i.test(data[0])) {
+    var matches = /Location: (.*)/ig.exec(this.headers.src);
+    this.client
+      .removeAllListeners('end')
+      .removeAllListeners('error')
+      .removeAllListeners('close');
+    this.closeClient('redirect', true);
+    this.init(matches[1]);
+    this.start();
+    return;
+  }
+
   this.headers.type = 'shoutcast';
 
   for(var i = 0; i < data.length; i++) {
     var header = data[i].split(':');
-    if(header[0] == 'icy-metaint') {
+    if(/icy-metaint/i.test(header[0])) {
       this.headers.metaint = parseInt(header[1]);
       break;
     }
   }
+
   // если metaint == 0, парсим как icecast
   if(this.headers.metaint == 0 || isNaN(this.headers.metaint)) {
     this.headers.type = 'icecast';
