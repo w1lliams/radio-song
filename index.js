@@ -233,7 +233,7 @@ Shoutcast.prototype.processMetadata = function(buffer, start) {
   if((buffer.length - start) >= need) {
     this.metadata.src += buffer.slice(start, start + need).toString();
     // вырезаем название песни
-    var match = /StreamTitle='(.*)';StreamUrl/im.exec(this.metadata.src);
+    var match = /StreamTitle='(.*)';/im.exec(this.metadata.src);
     if(match) this.metadata.src = match[1];
     this.metadataDone();
     this.closeClient('finish');
