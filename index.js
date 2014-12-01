@@ -84,6 +84,13 @@ Shoutcast.prototype.readStream = function () {
     .on('close', this.onError.bind(this))
 };
 
+Shoutcast.prototype.unbindErrorEvents = function () {
+  this.client
+    .removeAllListeners('end')
+    .removeAllListeners('error')
+    .removeAllListeners('close');
+};
+
 /**
  *
  */
@@ -160,8 +167,10 @@ Shoutcast.prototype.onConnect = function() {
  *
  */
 Shoutcast.prototype.onError = function () {
-  if(!this.metadata.done && this.triggerError)
+  if(!this.metadata.done && this.triggerError && !this.isError) {
+    this.isError = true;
     this.emit('error', this.error);
+  }
 };
 
 /**
@@ -183,10 +192,7 @@ Shoutcast.prototype.processHeaders = function() {
   // проверяем на редирект
   if(/HTTP\/1\.[10] 30[12] /i.test(data[0])) {
     var matches = /Location: (.*)/ig.exec(this.headers.src);
-    this.client
-      .removeAllListeners('end')
-      .removeAllListeners('error')
-      .removeAllListeners('close');
+    this.unbindErrorEvents();
     this.closeClient('redirect', true);
     this.init(matches[1]);
     this.start();
