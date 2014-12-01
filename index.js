@@ -1,5 +1,3 @@
-'use strict';
-
 var urlLib = require('url'),
   net = require('net'),
   http = require('http'),
@@ -68,11 +66,10 @@ Shoutcast.prototype.start = function () {
  */
 Shoutcast.prototype.readStream = function () {
   this.client = net.connect({
-    port: this.url.port,
+    port: this.url.port || 80,
     host: this.url.hostname
   }, this.onConnect.bind(this));
   this.client.setTimeout(3000, this.onTimeout.bind(this));
-
 
   this.client
     .on('data', this.onData.bind(this))
@@ -145,10 +142,10 @@ Shoutcast.prototype.onData = function(data){
  */
 Shoutcast.prototype.onConnect = function() {
   this.client.write(
-      'GET '+ this.url.path +' HTTP/1.0\r\n' +
-      'Icy-MetaData: 1\r\n' +
-      'User-Agent: VLC/2.0.5 LibVLC/2.0.5\r\n' +
-      '\r\n'
+    'GET '+ this.url.path +' HTTP/1.0\r\n' +
+    'Icy-MetaData: 1\r\n' +
+    'User-Agent: VLC/2.0.5 LibVLC/2.0.5\r\n' +
+    '\r\n'
   );
 };
 
@@ -176,28 +173,21 @@ Shoutcast.prototype.closeClient = function (error, silent) {
  */
 Shoutcast.prototype.processHeaders = function() {
   var data = this.headers.src.split('\r\n');
-  // определяем тип сервера (icecast/shoutcast)
-  // если shoutcast продолжаем работать дальше с сокетом и читаем пока не встретим метаданные
-  if(/^icy/i.test(data[0])) {
-    this.headers.type = 'shoutcast';
-    for(var i = 0; i < data.length; i++) {
-      var header = data[i].split(':');
-      if(header[0] == 'icy-metaint') {
-        this.headers.metaint = parseInt(header[1]);
-        break;
-      }
+  this.headers.type = 'shoutcast';
+
+  for(var i = 0; i < data.length; i++) {
+    var header = data[i].split(':');
+    if(header[0] == 'icy-metaint') {
+      this.headers.metaint = parseInt(header[1]);
+      break;
     }
-    // если metaint == 0, значит метаданных в потоке нет
-    if(this.headers.metaint == 0 || isNaN(this.headers.metaint))
-      this.closeClient('shoutcast: station don`t support metadata')
   }
-  // для icecast нужно парсить html страницу (закрываем сокет)
-  else if(/^http/i.test(data[0])) {
+  // если metaint == 0, парсим как icecast
+  if(this.headers.metaint == 0 || isNaN(this.headers.metaint)) {
     this.headers.type = 'icecast';
     this.closeClient('icecast server type', true);
     this.parseIcecastMetadata();
   }
-  else this.closeClient('unknown server type');
 };
 
 /**
