@@ -233,8 +233,10 @@ Shoutcast.prototype.processMetadata = function(buffer, start) {
   if((buffer.length - start) >= need) {
     this.metadata.src += buffer.slice(start, start + need).toString();
     // вырезаем название песни
-    var match = /StreamTitle='(.*?)';/im.exec(this.metadata.src);
-    if(match) this.metadata.src = match[1];
+    var match = /StreamTitle='([\s\S]*?)';/im.exec(this.metadata.src);
+    if(match) {
+      this.metadata.src = match[1].trim();
+    }
     this.metadataDone();
     this.closeClient('finish');
   } else {
@@ -306,10 +308,11 @@ function getHtmlPage (options, success, error) {
         error('response status != 200');
         return false;
       }
+
       var body = '';
       res
         .on('data', function (chunk) {
-          body += chunk.toString();
+          body += chunk.toString('utf-8');
         })
         .on('end', function () {
           clearTimeout(timeout);

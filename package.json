@@ -1,6 +1,6 @@
 {
   "name": "radio-song",
-  "version": "0.1.7",
+  "version": "0.1.8",
   "description": "This lib allows to grab/parse song titles from the radio (shoutcast/icecast) stream.",
   "author": {
     "name": "w1lliams",
